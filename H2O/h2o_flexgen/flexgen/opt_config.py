@@ -50,9 +50,22 @@ class OptConfig:
 
 
 def get_opt_config(name, **kwargs):
+    # if "/" in name:
+    #     name = name.split("/")[1]
+    # name = name.lower()
+
+    # 修改的内容__begin
+    # test
+    print("pre model name:", name)
+    # 原来是默认namespace/model_name从官网下载，拆分路径得到model_name, 
+    # 考虑本地路径存在多个/分隔的元素，最后一个元素是model_name
     if "/" in name:
-        name = name.split("/")[1]
+        # name = name.split("/")[1]
+        name = name.split("/")[-1]
     name = name.lower()
+    # test,已经是模型的名称了
+    print("past model name:", name)
+    # 修改的内容__end
 
     # Handle opt-iml-30b and opt-iml-max-30b
     if "-iml-max" in name:

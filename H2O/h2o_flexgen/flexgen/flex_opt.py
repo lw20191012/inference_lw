@@ -1262,10 +1262,25 @@ def get_test_inputs(prompt_len, num_prompts, tokenizer):
 
 
 def run_flexgen(args):
+    # if args.model == "facebook/galactica-30b":
+    #     tokenizer = AutoTokenizer.from_pretrained("facebook/galactica-30b", padding_side="left")
+    # else:
+    #     tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", padding_side="left", use_fast=True)
+    
+    # 修改成本地存在模型时的情况, 原来的情况只需要考虑opt-30b, opt系列和gpt系列, tokenizer可通用
     if args.model == "facebook/galactica-30b":
         tokenizer = AutoTokenizer.from_pretrained("facebook/galactica-30b", padding_side="left")
+    elif args.model == "facebook/opt-30b":
+        tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", padding_side="left")
     else:
-        tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", padding_side="left", use_fast=True)
+        # tokenizer = AutoTokenizer.from_pretrained("/opt/lw/Models/opt-1.3b", padding_side="left")
+        # # test
+        # print("the value of args model: ", args.model)
+        tokenizer = AutoTokenizer.from_pretrained(args.model, padding_side="left")
+        # # test
+        # print("the value of tokenizer: ", tokenizer)
+
+
     num_prompts = args.num_gpu_batches * args.gpu_batch_size
     prompt_len, gen_len, cut_gen_len = args.prompt_len, args.gen_len, args.cut_gen_len
 
