@@ -26,10 +26,10 @@ class Task:
     prompt_len: int
     gen_len: int
     cut_gen_len: Optional[int]
-
-    do_sample: bool
-    temperature: float
-    stop: Optional[int]
+    
+    do_sample: bool # 是否进行采样生成
+    temperature: float # 控制采样的多样性。值越高，生成的词分布越随机；值越低，生成的结果越保守
+    stop: Optional[int] # 可选的停止 token
 
 
 @dataclasses.dataclass(frozen=True)
@@ -40,8 +40,10 @@ class ExecutionEnv:
     disk: Any = None
     mixed: Any = None
 
+
     @classmethod
     def create(cls, offload_dir):
+        #  cls 作为类对象引用，它在方法内可以用于创建 ExecutionEnv 的实例
         # fix recursive import
         from flexgen.pytorch_backend import TorchDevice, TorchDisk, TorchMixedDevice
         gpu = TorchDevice("cuda:0")
@@ -50,6 +52,7 @@ class ExecutionEnv:
         return cls(gpu=gpu, cpu=cpu, disk=disk, mixed=TorchMixedDevice([gpu, cpu, disk]))
 
     def close_copy_threads(self):
+        # TorchDisk 类中的 close_copy_threads 方法关闭线程
         self.disk.close_copy_threads()
 
 
@@ -120,14 +123,14 @@ def sample_from_range(n, k):
         step = (n - 1) // (k - 1)
         return list(range(1, n + 1, step))
 
-
+# cpu内存占用
 def cpu_mem_stats():
     objects = gc.get_objects()
-    tensors = [obj for obj in objects if torch.is_tensor(obj) and not obj.is_cuda]
+    tensors = [obj for obj in objects if torch.is_tensor(obj) and not obj.is_cuda] # 非GPU上的张量对象
 
-    total_numel = 0
-    total_mem = 0
-    visited_data = set()
+    total_numel = 0 # 张量的总元素个数
+    total_mem = 0 # 张量占用的总内存
+    visited_data = set() # 记录已经访问过的张量存储指针
     for tensor in tensors:
         # a data_ptr indicates a memory block allocated
         data_ptr = tensor.storage().data_ptr()
@@ -135,15 +138,15 @@ def cpu_mem_stats():
             continue
         visited_data.add(data_ptr)
 
-        numel = tensor.numel()
-        total_numel += numel
-        element_size = tensor.storage().element_size()
-        mem = numel * element_size
-        total_mem += mem
+        numel = tensor.numel() # 张量对象中张量个数
+        total_numel += numel # 累加总个数
+        element_size = tensor.storage().element_size() # 张量中单个元素的大小
+        mem = numel * element_size # 所占内存
+        total_mem += mem # 累加总内存
 
     return total_mem
 
-
+# gpu内存占用
 def torch_mem_stats():
     objects = gc.get_objects()
     tensors = [obj for obj in objects if torch.is_tensor(obj) and obj.is_cuda]
@@ -237,11 +240,11 @@ def str2bool(v):
 
 def project_decode_latency(costs, prompt_len, gen_len):
     decode_costs = costs[1:]
-
+    # if...else...操作完全一致，来自FlexGen
     if gen_len / prompt_len < 0.1:
         warmup = 2
         decode_latency = (sum(decode_costs[:warmup]) +
-            np.mean(decode_costs[warmup:]) * (gen_len - 1 - warmup))
+            np.mean(decode_costs[warmup:]) * (gen_len - 1 - warmup)) # 2次解码之后开销趋于稳定
     else:
         warmup = 2
         decode_latency = (sum(decode_costs[:warmup]) +
@@ -271,7 +274,7 @@ def print_cpu_mem_usage(message = None):
           f"available: {vir_mem.available/GB:4.0f} GB")
     return vir_mem
 
-
+# 写日志
 def write_benchmark_log(filename, model_size, cache_size, hidden_size,
         gpu_peak_mem, projected, prefill_latency, prefill_throughput,
         decode_latency, decode_throughput, total_latency, total_throughput):

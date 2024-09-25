@@ -13,7 +13,7 @@ import shutil
 import numpy as np
 from tqdm import tqdm
 
-
+# 用于配置神经网络模型的 超参数 ，特别是与模型存储和缓存有关的计算
 @dataclasses.dataclass(frozen=True)
 class OptConfig:
     name: str = "opt-125m"
@@ -22,14 +22,15 @@ class OptConfig:
     hidden_size: int = 768
     n_head: int = 12
     input_dim: int = 768
-    ffn_embed_dim: int = 3072
-    pad: int = 1
+    ffn_embed_dim: int = 3072 # 嵌入维度
+    pad: int = 1 
     activation_fn: str = 'relu'
-    vocab_size: int = 50272
-    layer_norm_eps: float = 0.00001
-    pad_token_id: int = 1
-    dtype: type = np.float16
+    vocab_size: int = 50272 # 词汇表的大小
+    layer_norm_eps: float = 0.00001 # 层归一化的 epsilon 值，防止数值不稳定
+    pad_token_id: int = 1 # 用于填充的 token ID
+    dtype: type = np.float16 # 数据类型
 
+    # 该方法 估算 模型在内存中 占用的字节数
     def model_bytes(self):
         h = self.input_dim
         return 	2 * (self.num_hidden_layers * (
@@ -41,10 +42,12 @@ class OptConfig:
         h * 4) +
         # embedding
         self.vocab_size * (h + 1))
-
+    
+    # 计算缓存占用的字节数，尤其是自注意力机制中的键和值缓存
     def cache_bytes(self, batch_size, seq_len):
         return 2 * batch_size * seq_len * self.num_hidden_layers * self.input_dim * 2
-
+    
+    # 计算隐藏状态所需的内存大小
     def hidden_bytes(self, batch_size, seq_len):
         return batch_size * seq_len * self.input_dim * 2
 
@@ -56,7 +59,7 @@ def get_opt_config(name, **kwargs):
 
     # 修改的内容__begin
     # test
-    print("pre model name:", name)
+    print("******model name before get_opt_config:", name)
     # 原来是默认namespace/model_name从官网下载，拆分路径得到model_name, 
     # 考虑本地路径存在多个/分隔的元素，最后一个元素是model_name
     if "/" in name:
@@ -64,8 +67,9 @@ def get_opt_config(name, **kwargs):
         name = name.split("/")[-1]
     name = name.lower()
     # test,已经是模型的名称了
-    print("past model name:", name)
+    print("******model name after get_opt_config:", name)
     # 修改的内容__end
+
 
     # Handle opt-iml-30b and opt-iml-max-30b
     if "-iml-max" in name:
@@ -228,7 +232,7 @@ def disable_hf_opt_init():
     setattr(transformers.models.opt.modeling_opt.OPTPreTrainedModel,
             "_init_weights", lambda *args, **kwargs: None)
 
-
+# 下载opt模型权重
 def download_opt_weights(model_name, path):
     from huggingface_hub import snapshot_download
     import torch
@@ -238,14 +242,50 @@ def download_opt_weights(model_name, path):
           f"If it seems to get stuck, you can monitor the progress by "
           f"checking the memory usage of this process.")
 
-    if "opt" in model_name:
-        hf_model_name = "facebook/" + model_name
-    elif "galactica" in model_name:
-        hf_model_name = "facebook/" + model_name
+    # if "opt" in model_name:
+    #     hf_model_name = "facebook/" + model_name
+    # elif "galactica" in model_name:
+    #     hf_model_name = "facebook/" + model_name
 
-    folder = snapshot_download(hf_model_name, allow_patterns="*.bin")
-    bin_files = glob.glob(os.path.join(folder, "*.bin"))
+    # folder = snapshot_download(hf_model_name, allow_patterns="*.bin")
+    
 
+    # 添加的内容__begin
+    # test
+    print("********the model name when download the weight of model: ", model_name)
+    
+    # add: 本地存放模型的文件夹中是否存在该模型
+    model_dir = "/opt/lw/Models"
+    model_path = os.path.join(model_dir, model_name) 
+    # add: 原来是从facebook上下载
+    # 现在先判断模型是否存在于本地，若是则跳过Hugging Face下载
+    if os.path.exists(model_path):
+        print(f"Using local model path:{model_path}")
+        # return
+        hf_model_name = model_path # 本地路径
+        folder = hf_model_name # 返回包含.bin文件的文件夹
+    else:
+        print(f"Load the pre-trained pytorch weights of {model_name} from huggingface. "
+            f"The downloading and cpu loading can take dozens of minutes. "
+            f"If it seems to get stuck, you can monitor the progress by "
+            f"checking the memory usage of this process.")
+        # 在模型名称面前加上facebook
+        if "opt" in model_name:
+            hf_model_name = "facebook/" + model_name
+        elif "galactica" in model_name:
+            hf_model_name = "facebook/" + model_name
+        
+        # test
+        print("******huggingface model name:", hf_model_name)
+        folder = snapshot_download(hf_model_name, allow_patterns="*.bin") # 从Hugging Face 只下载.bin格式模型文件 到 文件夹folder
+    # 添加的内容__end
+
+    bin_files = glob.glob(os.path.join(folder, "*.bin")) # 返回 folder 文件夹中所有 .bin 文件的路径
+    # # test 不用该方法下载无法测试？？？
+    # print("******the type of bin_files:", type(bin_files))
+    # print("******the value of bin_files:", bin_files)
+    
+    # 新建存储权重目录
     if "/" in model_name:
         model_name = model_name.split("/")[1].lower()
     path = os.path.join(path, f"{model_name}-np")
@@ -254,13 +294,14 @@ def download_opt_weights(model_name, path):
 
     for bin_file in tqdm(bin_files, desc="Convert format"):
         state = torch.load(bin_file)
+        # 构造存储路径 param_path，并使用 numpy.save 将每个权重张量保存为 .npy 文件
         for name, param in tqdm(state.items(), leave=False):
             name = name.replace("model.", "")
             name = name.replace("decoder.final_layer_norm", "decoder.layer_norm")
             param_path = os.path.join(path, name)
             with open(param_path, "wb") as f:
                 np.save(f, param.cpu().detach().numpy())
-
+            # decoder.embed_tokens.weight是模型嵌入层权重，也用于语言模型的头部lm_head.weight，故将该文件复制，重命名为 lm_head.weight
             # shared embedding
             if "decoder.embed_tokens.weight" in name:
                 shutil.copy(param_path, param_path.replace(

@@ -157,7 +157,7 @@ class TorchTensor:
         return (f"TorchTensor(shape={self.shape}, dtype={str(self.dtype)}, "
                 f"device={self.device.name if self.device else None})")
 
-
+# CPU，GPU计算的管理
 class TorchDevice:
     """Wrap tensor and computation APIs of a single CPU or GPU."""
 
@@ -184,15 +184,16 @@ class TorchDevice:
         self.links[dst] = link
 
     def allocate(self, shape, dtype, pin_memory=None, name=None):
+        # 初始化pin_memory和func
         if self.device_type == DeviceType.CPU:
             pin_memory = True if pin_memory is None else pin_memory
             func = torch.zeros
         else:
             func = torch.empty
             pin_memory = False
-        dtype = np_dtype_to_torch_dtype[dtype]
-        data = func(shape, dtype=dtype, pin_memory=pin_memory, device=self.dev)
-        return TorchTensor.create_from_torch(data, self, name=name)
+        dtype = np_dtype_to_torch_dtype[dtype] # np的类型转换为torch类型，一个字典
+        data = func(shape, dtype=dtype, pin_memory=pin_memory, device=self.dev) # 分配一个张量data
+        return TorchTensor.create_from_torch(data, self, name=name) # 将分配的原始张量 data 封装成一个自定义的 TorchTensor 对象
 
     def delete(self, tensor):
         pass
@@ -313,10 +314,10 @@ class TorchDevice:
             shape = (prompt_len + gen_len - 1, gpu_batch_size * num_head, hidden_size // num_head)
         # NOTE: disable pin_memory due to high memory overhead
         pin_memory = False
-        k_cache = self.allocate(shape, np.float16, pin_memory=pin_memory)
+        k_cache = self.allocate(shape, np.float16, pin_memory=pin_memory) # 创建k，v, 累计值 张量空间
         v_cache = self.allocate(shape, np.float16, pin_memory=pin_memory)
         acc = self.allocate(shape[:-1], np.float16, pin_memory=pin_memory)
-        return k_cache, v_cache, acc
+        return k_cache, v_cache, acc # k,v,累计值 存储空间
 
     def mha(self, inputs, attention_mask, w_q, b_q, w_k, b_k, w_v, b_v,
             w_out, b_out, w_ln, b_ln, n_head, donate, compress_cache, comp_config, hh_k=None, hh_all=None):
@@ -706,7 +707,7 @@ class TorchDevice:
 
     def synchronize(self):
         torch.cuda.synchronize()
-
+    # 算gpu或cpu内存占用
     def mem_stats(self):
         if self.device_type == DeviceType.CUDA:
             cur_mem = torch.cuda.memory_allocated(self.dev)
@@ -718,12 +719,12 @@ class TorchDevice:
             raise NotImplementedError()
 
         return cur_mem, peak_mem
-
+    # 输出或保存当前设备的内存使用
     def print_stats(self, output_file=None):
-        torch.cuda.synchronize()
+        torch.cuda.synchronize() # 确保所有 GPU 操作完成
         cur_mem, peak_mem = self.mem_stats()
 
-        if output_file is not None:
+        if output_file is not None: # 提供了文件路径
             with open(output_file, "w") as f:
                 f.write(f"TorchDevice: {self.name}\n")
                 f.write(f"  cur_mem: {cur_mem/GB:.4f} GB, "
@@ -743,20 +744,20 @@ class TorchDisk:
     """Manage tensors stored on a disk."""
 
     def __init__(self, path, mem_capacity=None, cuda_id=0, num_copy_threads=4):
-        self.name = path
-        self.path = os.path.abspath(os.path.expanduser(path))
+        self.name = path 
+        self.path = os.path.abspath(os.path.expanduser(path)) # 带~的用户路径用实际路径替代~，然后再用绝对路径
         self.mem_capacity = mem_capacity
 
         self.device_type = DeviceType.DISK
         self.compressed_device = TorchCompressedDevice(self)
-
+        # 路径存在且是目录跳过，若路径不存在则新建目录
         if os.path.exists(self.path):
             assert os.path.isdir(self.path)
         else:
             os.makedirs(self.path)
 
         self.links = {}
-
+        # 创建默认4个线程
         # Copy threads
         self.copy_queue = queue.Queue()
         self.copy_threads = [
@@ -765,7 +766,7 @@ class TorchDisk:
             ) for _ in range(num_copy_threads)
         ]
         for t in self.copy_threads:
-            t.start()
+            t.start() # 启动每个线程
 
         global global_disk_device
         global_disk_device = self
@@ -800,7 +801,7 @@ class TorchDisk:
 
     def synchronize(self):
         self.copy_queue.join()
-
+    # 关闭线程
     def close_copy_threads(self):
         for _ in range(len(self.copy_threads)):
             self.copy_queue.put_nowait(None)
@@ -832,10 +833,10 @@ class TorchMixedDevice:
         self.base_devices = base_devices
 
     def allocate(self, shape, dtype, seg_lengths, pin_memory=None, name=None):
-        assert sum(seg_lengths) == shape[SEG_DIM]
-        assert len(seg_lengths) == len(self.base_devices)
+        assert sum(seg_lengths) == shape[SEG_DIM] # 在gpu，cpu，disk的长度之后等于head个数
+        assert len(seg_lengths) == len(self.base_devices) # lens长度等于分配的设备个数
         seg_points = [0]
-        for l in seg_lengths:
+        for l in seg_lengths:            
             seg_points.append(seg_points[-1] + l)
 
         devices = self.base_devices
@@ -867,7 +868,7 @@ class TorchMixedDevice:
             shape = (hh_k * 2 + gen_len - 1, gpu_batch_size * num_head, hidden_size // num_head)
         else:
             shape = (prompt_len + gen_len - 1, gpu_batch_size * num_head, hidden_size // num_head)
-
+        # 计算每个head在gpu，cpu和disk的缓存长度
         # We have to round to a multiple of `num_head`
         if policy.cache_disk_percent == 0:
             len_gpu = int(shape[SEG_DIM] * policy.cache_gpu_percent / 100) // num_head * num_head
@@ -884,7 +885,7 @@ class TorchMixedDevice:
             seg_lengths=lens, pin_memory=pin_memory)
         v_cache = self.allocate(shape, np.float16,
             seg_lengths=lens, pin_memory=pin_memory)
-        return k_cache, v_cache
+        return k_cache, v_cache # 无累计acc
 
 
 class TorchLink:
